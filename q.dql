@@ -1,0 +1,7 @@
+fetch user.events, from: now() - 2h
+| filter characteristics.has_navigation == true
+| filter frontend.name == "www.angular.easytravel.com"
+| fieldsAdd user_action = coalesce(page.detected_name, page.url.path, page.title)
+| summarize median_dur_ms = median(duration)/1000000, cnt = count(), by: {user_action}
+| sort cnt desc
+| limit 10
