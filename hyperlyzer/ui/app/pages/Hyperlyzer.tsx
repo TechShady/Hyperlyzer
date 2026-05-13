@@ -83,14 +83,12 @@ const buildDimQuery = (
   filters: AppliedFilter[],
   topN = TOP_N,
 ): string => {
-  // exclude any filter that targets THIS dimension (so the user still sees other entities of it)
-  const otherFilters = filters.filter((f) => f.dim !== dim);
   return `
 ${fetchClause(tf)}
 | filter characteristics.has_navigation == true
 | filter dt.rum.user_type != "robot"
 | filter frontend.name == "${escapeStr(frontend)}"
-${filterClauses(otherFilters)}
+${filterClauses(filters)}
 | fieldsAdd label = ${DIM_FIELD_EXPR[dim]}
 | filter isNotNull(label) and label != ""
 | summarize

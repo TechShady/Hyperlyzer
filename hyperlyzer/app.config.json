@@ -3,7 +3,7 @@
   "environmentUrl": "https://guu84124.apps.dynatrace.com/",
   "app": {
     "name": "Hyperlyzer",
-    "version": "0.0.5",
+    "version": "0.0.6",
     "description": "Multidimensional RUM analyzer by Browser, OS, Geo and User Action.",
     "id": "my.hyperlyzer",
     "scopes": [
