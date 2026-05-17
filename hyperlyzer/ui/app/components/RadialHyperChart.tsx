@@ -5,6 +5,8 @@ export type DimensionKey = "os" | "geo" | "browser" | "user_action";
 export interface DimensionItem {
   /** Display label */
   label: string;
+  /** Human-friendly display name (may differ from label for geo ISO codes) */
+  displayLabel?: string;
   /** Median action duration in ms */
   durationMs: number;
   /** Sample count */
@@ -399,7 +401,7 @@ export const RadialHyperChart: React.FC<RadialHyperChartProps> = ({
             {hovered.dimension.title}
           </div>
           <div style={{ fontWeight: 600, marginTop: 2 }}>
-            {hovered.item.label}
+            {hovered.item.displayLabel ?? hovered.item.label}
           </div>
           <div style={{ marginTop: 2 }}>
             {fmt(hovered.item.durationMs)}{" "}

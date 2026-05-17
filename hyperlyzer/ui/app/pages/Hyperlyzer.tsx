@@ -212,6 +212,29 @@ const DIM_FIELD_EXPR: Record<DimensionKey, string> = {
   browser: "browser.name",
 };
 
+/** ISO 3166-1 alpha-2 → full country name for display */
+const COUNTRY_NAME: Record<string, string> = {
+  US: "United States", CN: "China", DE: "Germany", JP: "Japan", GB: "United Kingdom",
+  KR: "South Korea", FR: "France", IT: "Italy", BR: "Brazil", IN: "India",
+  CA: "Canada", AU: "Australia", ES: "Spain", MX: "Mexico", NL: "Netherlands",
+  RU: "Russia", SE: "Sweden", CH: "Switzerland", PL: "Poland", BE: "Belgium",
+  AT: "Austria", NO: "Norway", DK: "Denmark", FI: "Finland", IE: "Ireland",
+  NZ: "New Zealand", SG: "Singapore", HK: "Hong Kong", TW: "Taiwan", IL: "Israel",
+  ZA: "South Africa", AR: "Argentina", CL: "Chile", CO: "Colombia", PT: "Portugal",
+  CZ: "Czech Republic", RO: "Romania", HU: "Hungary", GR: "Greece", TR: "Turkey",
+  TH: "Thailand", MY: "Malaysia", PH: "Philippines", ID: "Indonesia", VN: "Vietnam",
+  UA: "Ukraine", EG: "Egypt", SA: "Saudi Arabia", AE: "United Arab Emirates",
+  PK: "Pakistan", BD: "Bangladesh", NG: "Nigeria", KE: "Kenya", LT: "Lithuania",
+  LV: "Latvia", EE: "Estonia", SK: "Slovakia", SI: "Slovenia", HR: "Croatia",
+  BG: "Bulgaria", RS: "Serbia", KZ: "Kazakhstan", BY: "Belarus", PE: "Peru",
+};
+
+/** Convert a dimension label to a display-friendly name */
+const displayLabel = (dim: DimensionKey, label: string): string => {
+  if (dim === "geo") return COUNTRY_NAME[label] ?? label;
+  return label;
+};
+
 const TOP_N = 8;
 const FULL_LIST_LIMIT = 500;
 const PAGE_SIZE = 25;
@@ -242,11 +265,11 @@ const filterClauses = (filters: AppliedFilter[]): string =>
     .join("\n");
 
 /** Filter label used in the Users & Sessions app URL hash */
-const DIM_SESSION_FILTER: Record<DimensionKey, string> = {
-  os: "OS family",
-  geo: "Location",
-  user_action: "Action name",
-  browser: "Browser family",
+const DIM_SESSION_FILTER: Record<DimensionKey, { name: string; quoted: boolean }> = {
+  os: { name: "OS family", quoted: true },
+  geo: { name: "Location", quoted: true },
+  user_action: { name: "Action name", quoted: true },
+  browser: { name: "Browser", quoted: false },
 };
 
 /** Convert the app timeframe to the tf query param format used by DT apps (e.g. "now-2h;now" or ISO;ISO) */
@@ -270,7 +293,10 @@ const buildDrilldownUrl = (
   const envUrl = getEnvironmentUrl();
   const base = `${envUrl}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
   const tfParam = encodeURIComponent(tfToUrlParam(tf));
-  const filterStr = `Frontends = ${frontend} ${DIM_SESSION_FILTER[dim]} = "${label}" `;
+  const dimFilter = DIM_SESSION_FILTER[dim];
+  const displayVal = displayLabel(dim, label);
+  const valStr = dimFilter.quoted ? `"${displayVal}"` : displayVal;
+  const filterStr = `Frontends = ${frontend} ${dimFilter.name} = ${valStr} `;
   const hash = `#filtering=${encodeURIComponent(filterStr).replace(/%20/g, "+")}`;
   return `${base}?tf=${tfParam}&df=1&perspective=general&sort=navigationCount%3Adescending${hash}`;
 };
@@ -327,14 +353,18 @@ ${metric.postCompute ?? ""}
 `.trim();
 };
 
-const toItems = (records: DimRow[] | undefined): DimensionItem[] => {
+const toItems = (records: DimRow[] | undefined, dim?: DimensionKey): DimensionItem[] => {
   if (!records) return [];
   return records
-    .map((r) => ({
-      label: String(r.label ?? "—"),
-      durationMs: Number(r.metric_val ?? 0),
-      count: Number(r.cnt ?? 0),
-    }))
+    .map((r) => {
+      const label = String(r.label ?? "—");
+      return {
+        label,
+        displayLabel: dim ? displayLabel(dim, label) : label,
+        durationMs: Number(r.metric_val ?? 0),
+        count: Number(r.cnt ?? 0),
+      };
+    })
     .filter((i) => i.count > 0);
 };
 
@@ -419,7 +449,7 @@ const FilterChip: React.FC<FilterChipProps> = ({ filter, onRemove }) => {
       <span style={{ opacity: 0.85, fontSize: 10, textTransform: "uppercase" }}>
         {DIM_TITLE[filter.dim]}:
       </span>
-      <span>{filter.label}</span>
+      <span>{displayLabel(filter.dim, filter.label)}</span>
       <button
         type="button"
         onClick={onRemove}
@@ -490,22 +520,22 @@ export const Hyperlyzer = () => {
       {
         key: "os",
         title: DIM_TITLE.os,
-        items: toItems(os.data?.records as DimRow[] | undefined),
+        items: toItems(os.data?.records as DimRow[] | undefined, "os"),
       },
       {
         key: "geo",
         title: DIM_TITLE.geo,
-        items: toItems(geo.data?.records as DimRow[] | undefined),
+        items: toItems(geo.data?.records as DimRow[] | undefined, "geo"),
       },
       {
         key: "user_action",
         title: DIM_TITLE.user_action,
-        items: toItems(userAction.data?.records as DimRow[] | undefined),
+        items: toItems(userAction.data?.records as DimRow[] | undefined, "user_action"),
       },
       {
         key: "browser",
         title: DIM_TITLE.browser,
-        items: toItems(browser.data?.records as DimRow[] | undefined),
+        items: toItems(browser.data?.records as DimRow[] | undefined, "browser"),
       },
     ],
     [browser.data, os.data, geo.data, userAction.data],
@@ -563,13 +593,13 @@ export const Hyperlyzer = () => {
 
   // Side list shows entries of the focused dimension only, sorted by duration.
   const focusedItems: DimensionItem[] = useMemo(
-    () => toItems(focusedFull.data?.records as DimRow[] | undefined),
-    [focusedFull.data],
+    () => toItems(focusedFull.data?.records as DimRow[] | undefined, focusDim),
+    [focusedFull.data, focusDim],
   );
   const focusedRows = useMemo(() => {
     const q = filterText.trim().toLowerCase();
     const filtered = q
-      ? focusedItems.filter((i) => i.label.toLowerCase().includes(q))
+      ? focusedItems.filter((i) => (i.displayLabel ?? i.label).toLowerCase().includes(q))
       : focusedItems;
     return [...filtered].sort((a, b) => b.durationMs - a.durationMs);
   }, [focusedItems, filterText]);
@@ -715,7 +745,7 @@ export const Hyperlyzer = () => {
               key={idx}
               color={DIM_BASE_COLOR[f.dim.key]}
               dimensionLabel={f.dim.title}
-              title={f.item.label}
+              title={f.item.displayLabel ?? f.item.label}
               description={
                 <>
                   {metric.label} is{" "}
@@ -894,7 +924,7 @@ export const Hyperlyzer = () => {
                           verticalAlign: "middle",
                         }}
                       />
-                      {r.label}
+                      {displayLabel(focusDim, r.label)}
                     </td>
                     <td
                       style={{
@@ -1020,7 +1050,7 @@ export const Hyperlyzer = () => {
           <Paragraph>
             Restrict the analysis to{" "}
             <strong>{DIM_TITLE[pendingFilter.dim]}</strong> ={" "}
-            <strong>{pendingFilter.label}</strong>?
+            <strong>{displayLabel(pendingFilter.dim, pendingFilter.label)}</strong>?
           </Paragraph>
         )}
       </Modal>
