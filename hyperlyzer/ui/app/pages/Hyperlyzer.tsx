@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useDql } from "@dynatrace-sdk/react-hooks";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Paragraph } from "@dynatrace/strato-components/typography";
-import { TextInput } from "@dynatrace/strato-components/forms";
+import { Select, TextInput } from "@dynatrace/strato-components/forms";
 import { Button } from "@dynatrace/strato-components/buttons";
 import { ProgressCircle } from "@dynatrace/strato-components/content";
 import { Modal } from "@dynatrace/strato-components/overlays";
@@ -17,14 +17,163 @@ import {
 import { useFrontendSetting } from "../settings/frontendSetting";
 import { useAppTimeframe } from "../state/TimeframeContext";
 
+// ─── Metric Configuration ───────────────────────────────────────────────────
+
+export type MetricKey =
+  | "duration"
+  | "apdex"
+  | "lcp"
+  | "inp"
+  | "cls"
+  | "ttfb"
+  | "load_event_end"
+  | "performance_health"
+  | "fcp"
+  | "speed_index";
+
+interface MetricConfig {
+  key: MetricKey;
+  label: string;
+  /** DQL summarize expression(s) — must yield `metric_val` and `cnt` */
+  summarize: string;
+  /** Unit type for formatting */
+  unit: "ms" | "seconds" | "score" | "ratio";
+  /** Whether higher values are "better" (apdex, perf health) */
+  higherIsBetter: boolean;
+  /** Additional fieldsAdd clauses needed before summarize (e.g. for computed scores) */
+  preCompute?: string;
+  /** Additional filter to apply (e.g. only rows that have the field) */
+  extraFilter?: string;
+}
+
+const METRICS: MetricConfig[] = [
+  {
+    key: "duration",
+    label: "Action Duration",
+    summarize:
+      "metric_val = median(duration) / 1000000, cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+  },
+  {
+    key: "apdex",
+    label: "Apdex",
+    summarize:
+      "metric_val = (toDouble(countIf(duration <= 3000000000)) + 0.5 * toDouble(countIf(duration > 3000000000 AND duration <= 12000000000))) / toDouble(count()), cnt = count()",
+    unit: "score",
+    higherIsBetter: true,
+  },
+  {
+    key: "lcp",
+    label: "LCP",
+    summarize:
+      "metric_val = median(web_vitals.largest_contentful_paint), cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(web_vitals.largest_contentful_paint)",
+  },
+  {
+    key: "inp",
+    label: "INP",
+    summarize:
+      "metric_val = median(web_vitals.interaction_to_next_paint), cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(web_vitals.interaction_to_next_paint)",
+  },
+  {
+    key: "cls",
+    label: "CLS",
+    summarize:
+      "metric_val = median(web_vitals.cumulative_layout_shift), cnt = count()",
+    unit: "ratio",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(web_vitals.cumulative_layout_shift)",
+  },
+  {
+    key: "ttfb",
+    label: "TTFB",
+    summarize:
+      "metric_val = median(web_vitals.time_to_first_byte), cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(web_vitals.time_to_first_byte)",
+  },
+  {
+    key: "load_event_end",
+    label: "Load Event End",
+    summarize:
+      "metric_val = median(timing.load_event_end), cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(timing.load_event_end)",
+  },
+  {
+    key: "performance_health",
+    label: "Performance Health",
+    preCompute: `| fieldsAdd lcp_score = if(web_vitals.largest_contentful_paint <= 2500, 1.0, if(web_vitals.largest_contentful_paint <= 4000, 0.5, 0.0)),
+    inp_score = if(web_vitals.interaction_to_next_paint <= 200, 1.0, if(web_vitals.interaction_to_next_paint <= 500, 0.5, 0.0)),
+    cls_score = if(web_vitals.cumulative_layout_shift <= 0.1, 1.0, if(web_vitals.cumulative_layout_shift <= 0.25, 0.5, 0.0)),
+    ttfb_score = if(web_vitals.time_to_first_byte <= 800, 1.0, if(web_vitals.time_to_first_byte <= 1800, 0.5, 0.0))
+| fieldsAdd perf_health = (lcp_score + inp_score + cls_score + ttfb_score) / 4.0`,
+    summarize: "metric_val = avg(perf_health), cnt = count()",
+    unit: "score",
+    higherIsBetter: true,
+    extraFilter:
+      "| filter isNotNull(web_vitals.largest_contentful_paint) AND isNotNull(web_vitals.interaction_to_next_paint) AND isNotNull(web_vitals.cumulative_layout_shift) AND isNotNull(web_vitals.time_to_first_byte)",
+  },
+  {
+    key: "fcp",
+    label: "FCP",
+    summarize:
+      "metric_val = median(web_vitals.first_contentful_paint), cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(web_vitals.first_contentful_paint)",
+  },
+  {
+    key: "speed_index",
+    label: "Speed Index",
+    summarize:
+      "metric_val = median(user_action.speed_index), cnt = count()",
+    unit: "ms",
+    higherIsBetter: false,
+    extraFilter: "| filter isNotNull(user_action.speed_index)",
+  },
+];
+
+const METRIC_MAP = Object.fromEntries(METRICS.map((m) => [m.key, m])) as Record<
+  MetricKey,
+  MetricConfig
+>;
+
+/** Format a metric value for display */
+const formatMetricValue = (value: number, metric: MetricConfig): string => {
+  if (!isFinite(value) || value < 0) return "—";
+  switch (metric.unit) {
+    case "ms":
+      if (value >= 1000) return `${(value / 1000).toFixed(2)} s`;
+      if (value >= 1) return `${value.toFixed(0)} ms`;
+      return `${(value * 1000).toFixed(0)} µs`;
+    case "seconds":
+      return `${value.toFixed(2)} s`;
+    case "score":
+      return value.toFixed(3);
+    case "ratio":
+      return value.toFixed(4);
+  }
+};
+
+// ─── Interfaces & constants ─────────────────────────────────────────────────
+
 interface DimRow extends Record<string, unknown> {
   label: string;
-  median_dur_ms: string | number | null;
+  metric_val: string | number | null;
   cnt: string | number | null;
 }
 
 interface MedianRow extends Record<string, unknown> {
-  median_dur_ms: string | number | null;
+  metric_val: string | number | null;
 }
 
 interface AppliedFilter {
@@ -76,11 +225,45 @@ const filterClauses = (filters: AppliedFilter[]): string =>
     )
     .join("\n");
 
+/** Filter label used in the Users & Sessions app URL hash */
+const DIM_SESSION_FILTER: Record<DimensionKey, string> = {
+  os: "OS family",
+  geo: "Location",
+  user_action: "Action name",
+  browser: "Browser family",
+};
+
+/** Convert the app timeframe to the tf query param format used by DT apps (e.g. "now-2h;now" or ISO;ISO) */
+const tfToUrlParam = (tf: TF): string => {
+  const from =
+    tf.fromType === "expression"
+      ? tf.from.replace(/\(\)/g, "")
+      : tf.from;
+  const to =
+    tf.toType === "expression" ? tf.to.replace(/\(\)/g, "") : tf.to;
+  return `${from};${to}`;
+};
+
+/** Build a drilldown URL to the Users & Sessions app filtered by frontend + dimension value */
+const buildDrilldownUrl = (
+  frontend: string,
+  dim: DimensionKey,
+  label: string,
+  tf: TF,
+): string => {
+  const base = `/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
+  const tfParam = encodeURIComponent(tfToUrlParam(tf));
+  const filterStr = `Frontends = ${frontend} ${DIM_SESSION_FILTER[dim]} = "${label}" `;
+  const hash = `#filtering=${encodeURIComponent(filterStr).replace(/%20/g, "+")}`;
+  return `${base}?tf=${tfParam}&df=1&perspective=general${hash}`;
+};
+
 const buildDimQuery = (
   dim: DimensionKey,
   frontend: string,
   tf: TF,
   filters: AppliedFilter[],
+  metric: MetricConfig,
   topN = TOP_N,
 ): string => {
   return `
@@ -89,11 +272,12 @@ ${fetchClause(tf)}
 | filter dt.rum.user_type != "robot"
 | filter frontend.name == "${escapeStr(frontend)}"
 ${filterClauses(filters)}
+${metric.extraFilter ?? ""}
 | fieldsAdd label = ${DIM_FIELD_EXPR[dim]}
 | filter isNotNull(label) and label != ""
+${metric.preCompute ?? ""}
 | summarize
-    median_dur_ms = median(duration) / 1000000,
-    cnt = count(),
+    ${metric.summarize},
     by: {label}
 | sort cnt desc
 | limit ${topN}
@@ -104,13 +288,16 @@ const medianQuery = (
   frontend: string,
   tf: TF,
   filters: AppliedFilter[],
+  metric: MetricConfig,
 ): string => `
 ${fetchClause(tf)}
 | filter characteristics.has_navigation == true
 | filter dt.rum.user_type != "robot"
 | filter frontend.name == "${escapeStr(frontend)}"
 ${filterClauses(filters)}
-| summarize median_dur_ms = median(duration) / 1000000
+${metric.extraFilter ?? ""}
+${metric.preCompute ?? ""}
+| summarize ${metric.summarize.replace(", cnt = count()", "")}
 `.trim();
 
 const toItems = (records: DimRow[] | undefined): DimensionItem[] => {
@@ -118,7 +305,7 @@ const toItems = (records: DimRow[] | undefined): DimensionItem[] => {
   return records
     .map((r) => ({
       label: String(r.label ?? "—"),
-      durationMs: Number(r.median_dur_ms ?? 0),
+      durationMs: Number(r.metric_val ?? 0),
       count: Number(r.cnt ?? 0),
     }))
     .filter((i) => i.durationMs > 0);
@@ -238,23 +425,25 @@ export const Hyperlyzer = () => {
   const [pendingFilter, setPendingFilter] = useState<AppliedFilter | null>(
     null,
   );
+  const [selectedMetric, setSelectedMetric] = useState<MetricKey>("duration");
+  const metric = METRIC_MAP[selectedMetric];
 
   // Drop filters that no longer match the focused frontend / timeframe? keep them; user can clear.
 
   const browser = useDql<DimRow>({
-    query: buildDimQuery("browser", frontend, timeframe, appliedFilters),
+    query: buildDimQuery("browser", frontend, timeframe, appliedFilters, metric),
   });
   const os = useDql<DimRow>({
-    query: buildDimQuery("os", frontend, timeframe, appliedFilters),
+    query: buildDimQuery("os", frontend, timeframe, appliedFilters, metric),
   });
   const geo = useDql<DimRow>({
-    query: buildDimQuery("geo", frontend, timeframe, appliedFilters),
+    query: buildDimQuery("geo", frontend, timeframe, appliedFilters, metric),
   });
   const userAction = useDql<DimRow>({
-    query: buildDimQuery("user_action", frontend, timeframe, appliedFilters),
+    query: buildDimQuery("user_action", frontend, timeframe, appliedFilters, metric),
   });
   const median = useDql<MedianRow>({
-    query: medianQuery(frontend, timeframe, appliedFilters),
+    query: medianQuery(frontend, timeframe, appliedFilters, metric),
   });
 
   // Full list query for the focused dimension (for the side table — not limited to TOP_N).
@@ -264,6 +453,7 @@ export const Hyperlyzer = () => {
       frontend,
       timeframe,
       appliedFilters,
+      metric,
       FULL_LIST_LIMIT,
     ),
   });
@@ -295,7 +485,7 @@ export const Hyperlyzer = () => {
   );
 
   const appMedianMs = Number(
-    (median.data?.records?.[0] as MedianRow | undefined)?.median_dur_ms ?? 0,
+    (median.data?.records?.[0] as MedianRow | undefined)?.metric_val ?? 0,
   );
 
   const isLoading =
@@ -407,12 +597,39 @@ export const Hyperlyzer = () => {
 
   return (
     <Flex flexDirection="column" padding={24} gap={16}>
-      <Flex flexDirection="column" gap={4}>
-        <Heading level={2}>{frontend}</Heading>
-        <Paragraph>
-          Multidimensional visual query interface · click a dimension label to
-          focus, click a slice or list entry to add a filter.
-        </Paragraph>
+      <Flex justifyContent="space-between" alignItems="flex-start" gap={16}>
+        <Flex flexDirection="column" gap={4} style={{ flex: 1 }}>
+          <Heading level={2}>{frontend}</Heading>
+          <Paragraph>
+            Multidimensional visual query interface · click a dimension label to
+            focus, click a slice or list entry to add a filter.
+          </Paragraph>
+        </Flex>
+        <Flex flexDirection="column" gap={2} style={{ minWidth: 200 }}>
+          <span
+            style={{
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+              color: "var(--dt-colors-text-neutral-subdued)",
+            }}
+          >
+            Metric
+          </span>
+          <Select
+            name="metric-select"
+            value={selectedMetric}
+            onChange={(v) => { if (v) setSelectedMetric(v as MetricKey); }}
+          >
+            <Select.Content>
+              {METRICS.map((m) => (
+                <Select.Option key={m.key} value={m.key}>
+                  {m.label}
+                </Select.Option>
+              ))}
+            </Select.Content>
+          </Select>
+        </Flex>
       </Flex>
 
       {firstError && (
@@ -460,10 +677,12 @@ export const Hyperlyzer = () => {
           <Paragraph>No findings yet — try a wider timeframe.</Paragraph>
         )}
         {findings.map((f, idx) => {
-          const slower = f.ratio >= 1;
+          const slower = metric.higherIsBetter ? f.ratio < 1 : f.ratio >= 1;
           const factor = slower
-            ? f.ratio.toFixed(1)
-            : (1 / Math.max(f.ratio, 0.0001)).toFixed(1);
+            ? (metric.higherIsBetter ? (1 / Math.max(f.ratio, 0.0001)) : f.ratio).toFixed(1)
+            : (metric.higherIsBetter ? f.ratio : (1 / Math.max(f.ratio, 0.0001))).toFixed(1);
+          const worseLabel = metric.higherIsBetter ? "lower" : "higher";
+          const betterLabel = metric.higherIsBetter ? "higher" : "lower";
           return (
             <FindingCard
               key={idx}
@@ -472,11 +691,11 @@ export const Hyperlyzer = () => {
               title={f.item.label}
               description={
                 <>
-                  Action duration is{" "}
+                  {metric.label} is{" "}
                   <strong>{factor}×</strong>{" "}
-                  {slower ? "slower" : "faster"} than the application median{" "}
-                  (<strong>{formatActionDuration(f.item.durationMs)}</strong>{" "}
-                  vs {formatActionDuration(appMedianMs)}).
+                  {slower ? worseLabel : betterLabel} than the app median{" "}
+                  (<strong>{formatMetricValue(f.item.durationMs, metric)}</strong>{" "}
+                  vs {formatMetricValue(appMedianMs, metric)}).
                 </>
               }
             />
@@ -518,6 +737,8 @@ export const Hyperlyzer = () => {
             focusDim={focusDim}
             onDimensionFocus={(k) => setFocusDim(k)}
             onSliceClick={(k, item) => promptFilter(k, item)}
+            formatValue={(v) => formatMetricValue(v, metric)}
+            metricLabel={`App median ${metric.label}`}
           />
         </Flex>
 
@@ -610,7 +831,16 @@ export const Hyperlyzer = () => {
                       letterSpacing: 0.5,
                     }}
                   >
-                    ACTION DURATION
+                    {metric.label.toUpperCase()}
+                  </th>
+                  <th
+                    style={{
+                      padding: "10px 12px",
+                      textAlign: "center",
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    DRILLDOWN
                   </th>
                 </tr>
               </thead>
@@ -647,14 +877,35 @@ export const Hyperlyzer = () => {
                         fontSize: 13,
                       }}
                     >
-                      {formatActionDuration(r.durationMs)}
+                      {formatMetricValue(r.durationMs, metric)}
+                    </td>
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "center",
+                        fontSize: 13,
+                      }}
+                    >
+                      <a
+                        href={buildDrilldownUrl(frontend, focusDim, r.label, timeframe)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          color: "var(--dt-colors-text-primary-default, #1496ff)",
+                          textDecoration: "none",
+                          fontWeight: 500,
+                        }}
+                      >
+                        Sessions ↗
+                      </a>
                     </td>
                   </tr>
                 ))}
                 {pageRows.length === 0 && !isLoading && (
                   <tr>
                     <td
-                      colSpan={2}
+                      colSpan={3}
                       style={{
                         padding: "16px",
                         textAlign: "center",

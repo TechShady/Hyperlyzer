@@ -28,6 +28,10 @@ export interface RadialHyperChartProps {
   /** Click on a slice (entity) — caller can prompt to apply as filter */
   onSliceClick?: (dim: DimensionKey, item: DimensionItem) => void;
   size?: number;
+  /** Custom value formatter (defaults to duration formatting) */
+  formatValue?: (value: number) => string;
+  /** Label shown below the center value */
+  metricLabel?: string;
 }
 
 const DIM_BASE_HUE: Record<DimensionKey, number> = {
@@ -274,7 +278,10 @@ export const RadialHyperChart: React.FC<RadialHyperChartProps> = ({
   focusDim,
   onDimensionFocus,
   onSliceClick,
+  formatValue,
+  metricLabel,
 }) => {
+  const fmt = formatValue ?? formatDuration;
   const [hovered, setHovered] = useState<{
     dimension: DimensionData;
     item: DimensionItem;
@@ -351,7 +358,7 @@ export const RadialHyperChart: React.FC<RadialHyperChartProps> = ({
           fontWeight={500}
           fill="var(--dt-colors-text-neutral-default)"
         >
-          {formatDuration(appMedianMs)}
+          {fmt(appMedianMs)}
         </text>
         <text
           x={cx}
@@ -360,7 +367,7 @@ export const RadialHyperChart: React.FC<RadialHyperChartProps> = ({
           fontSize={11}
           fill="var(--dt-colors-text-neutral-subdued)"
         >
-          Application median
+          {metricLabel ?? "Application median"}
         </text>
       </svg>
 
@@ -395,7 +402,7 @@ export const RadialHyperChart: React.FC<RadialHyperChartProps> = ({
             {hovered.item.label}
           </div>
           <div style={{ marginTop: 2 }}>
-            {formatDuration(hovered.item.durationMs)}{" "}
+            {fmt(hovered.item.durationMs)}{" "}
             <span style={{ color: "var(--dt-colors-text-neutral-subdued)" }}>
               · n={hovered.item.count.toLocaleString()}
             </span>
