@@ -71,7 +71,7 @@ const METRICS: MetricConfig[] = [
     key: "lcp",
     label: "LCP",
     summarize:
-      "metric_val = median(web_vitals.largest_contentful_paint) / 1000000, cnt = count()",
+      "metric_val = percentile(web_vitals.largest_contentful_paint, 75) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.largest_contentful_paint)",
@@ -81,7 +81,7 @@ const METRICS: MetricConfig[] = [
     key: "inp",
     label: "INP",
     summarize:
-      "metric_val = median(web_vitals.interaction_to_next_paint) / 1000000, cnt = count()",
+      "metric_val = percentile(web_vitals.interaction_to_next_paint, 75) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.interaction_to_next_paint)",
@@ -91,7 +91,7 @@ const METRICS: MetricConfig[] = [
     key: "cls",
     label: "CLS",
     summarize:
-      "metric_val = median(web_vitals.cumulative_layout_shift), cnt = count()",
+      "metric_val = percentile(web_vitals.cumulative_layout_shift, 75), cnt = count()",
     unit: "ratio",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.cumulative_layout_shift)",
@@ -101,7 +101,7 @@ const METRICS: MetricConfig[] = [
     key: "ttfb",
     label: "TTFB",
     summarize:
-      "metric_val = median(web_vitals.time_to_first_byte) / 1000000, cnt = count()",
+      "metric_val = percentile(web_vitals.time_to_first_byte, 75) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.time_to_first_byte)",
@@ -110,17 +110,16 @@ const METRICS: MetricConfig[] = [
     key: "load_event_end",
     label: "Load Event End",
     summarize:
-      "metric_val = median(timing.load_event_end) / 1000000, cnt = count()",
+      "metric_val = percentile(performance.load_event_end, 75) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
-    extraFilter: "| filter isNotNull(timing.load_event_end)",
-    skipNavigationFilter: true,
+    extraFilter: "| filter isNotNull(performance.load_event_end)",
   },
   {
     key: "fcp",
     label: "FCP",
     summarize:
-      "metric_val = median(web_vitals.first_contentful_paint) / 1000000, cnt = count()",
+      "metric_val = percentile(web_vitals.first_contentful_paint, 75) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.first_contentful_paint)",
@@ -150,6 +149,36 @@ const formatMetricValue = (value: number, metric: MetricConfig): string => {
   }
 };
 
+/** Industry-standard thresholds: returns "good" | "needs-improvement" | "poor" */
+const getMetricRating = (value: number, metric: MetricConfig): "good" | "needs-improvement" | "poor" => {
+  switch (metric.key) {
+    case "lcp":
+      return value < 2500 ? "good" : value < 4000 ? "needs-improvement" : "poor";
+    case "fcp":
+      return value < 1800 ? "good" : value < 3000 ? "needs-improvement" : "poor";
+    case "inp":
+      return value < 200 ? "good" : value < 500 ? "needs-improvement" : "poor";
+    case "cls":
+      return value < 0.1 ? "good" : value < 0.25 ? "needs-improvement" : "poor";
+    case "ttfb":
+      return value < 800 ? "good" : value < 1800 ? "needs-improvement" : "poor";
+    case "load_event_end":
+      return value < 2500 ? "good" : value < 4000 ? "needs-improvement" : "poor";
+    case "duration":
+      return value < 3000 ? "good" : value < 12000 ? "needs-improvement" : "poor";
+    case "apdex":
+      return value >= 0.85 ? "good" : value >= 0.5 ? "needs-improvement" : "poor";
+    default:
+      return "good";
+  }
+};
+
+const RATING_COLOR: Record<string, string> = {
+  good: "#0cce6b",
+  "needs-improvement": "#ffa400",
+  poor: "#ff4e42",
+};
+
 // ─── Interfaces & constants ─────────────────────────────────────────────────
 
 interface DimRow extends Record<string, unknown> {
@@ -177,7 +206,7 @@ const DIM_TITLE: Record<DimensionKey, string> = {
 /** DQL expression that yields the dimension's value */
 const DIM_FIELD_EXPR: Record<DimensionKey, string> = {
   os: "os.name",
-  geo: "geo.country.iso_code",
+  geo: "geo.country.name",
   user_action: "coalesce(page.detected_name, page.url.path, page.title)",
   browser: "browser.name",
 };
@@ -237,11 +266,12 @@ const buildDrilldownUrl = (
   label: string,
   tf: TF,
 ): string => {
-  const base = `/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const base = `${origin}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
   const tfParam = encodeURIComponent(tfToUrlParam(tf));
   const filterStr = `Frontends = ${frontend} ${DIM_SESSION_FILTER[dim]} = "${label}" `;
   const hash = `#filtering=${encodeURIComponent(filterStr).replace(/%20/g, "+")}`;
-  return `${base}?tf=${tfParam}&df=1&perspective=general${hash}`;
+  return `${base}?tf=${tfParam}&df=1&perspective=general&sort=navigationCount%3Adescending${hash}`;
 };
 
 const buildDimQuery = (
@@ -304,7 +334,7 @@ const toItems = (records: DimRow[] | undefined): DimensionItem[] => {
       durationMs: Number(r.metric_val ?? 0),
       count: Number(r.cnt ?? 0),
     }))
-    .filter((i) => i.durationMs > 0);
+    .filter((i) => i.count > 0);
 };
 
 interface FindingCardProps {
@@ -871,6 +901,8 @@ export const Hyperlyzer = () => {
                         textAlign: "right",
                         fontVariantNumeric: "tabular-nums",
                         fontSize: 13,
+                        color: RATING_COLOR[getMetricRating(r.durationMs, metric)],
+                        fontWeight: 600,
                       }}
                     >
                       {formatMetricValue(r.durationMs, metric)}

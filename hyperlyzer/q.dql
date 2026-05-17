@@ -1,6 +1,10 @@
-fetch user.events, from: now() - 2h, to: now()
-| filter characteristics.has_navigation == true
-| filter dt.rum.user_type != "robot"
+fetch user.events, from: now()-7d
 | filter frontend.name == "www.angular.easytravel.com"
-| fieldsKeep web_vitals.*, timing.*
-| limit 1
+| filter dt.rum.user_type != "robot"
+| filter isNotNull(web_vitals.interaction_to_next_paint)
+| summarize
+    avg_inp = avg(web_vitals.interaction_to_next_paint),
+    p75_inp = percentile(web_vitals.interaction_to_next_paint, 75),
+    p90_inp = percentile(web_vitals.interaction_to_next_paint, 90),
+    p95_inp = percentile(web_vitals.interaction_to_next_paint, 95),
+    cnt = count()
