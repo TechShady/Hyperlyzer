@@ -274,12 +274,9 @@ const DIM_SESSION_FILTER: Record<DimensionKey, { name: string; alwaysQuoteValue:
 
 /** Convert the app timeframe to the tf query param format used by DT apps (e.g. "now-2h;now" or ISO;ISO) */
 const tfToUrlParam = (tf: TF): string => {
-  const from =
-    tf.fromType === "expression"
-      ? tf.from.replace(/\(\)/g, "")
-      : tf.from;
-  const to =
-    tf.toType === "expression" ? tf.to.replace(/\(\)/g, "") : tf.to;
+  const clean = (v: string) => v.replace(/\(\)/g, "").replace(/^now\(\)/, "now");
+  const from = tf.fromType === "expression" ? clean(tf.from) : tf.from;
+  const to = tf.toType === "expression" ? clean(tf.to) : tf.to;
   return `${from};${to}`;
 };
 
@@ -292,15 +289,15 @@ const buildDrilldownUrl = (
   appEntityId?: string,
 ): string => {
   const envUrl = getEnvironmentUrl();
+  const tfParam = encodeURIComponent(tfToUrlParam(tf));
 
   // User actions link to the Vitals Experience app
   if (dim === "user_action" && appEntityId) {
     const pageEncoded = encodeURIComponent(btoa(label));
-    return `${envUrl}/ui/apps/dynatrace.experience.vitals/performance/web/${appEntityId}/pages/${pageEncoded}`;
+    return `${envUrl}/ui/apps/dynatrace.experience.vitals/performance/web/${appEntityId}/pages/${pageEncoded}?tf=${tfParam}`;
   }
 
   const base = `${envUrl}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
-  const tfParam = encodeURIComponent(tfToUrlParam(tf));
   const dimFilter = DIM_SESSION_FILTER[dim];
   const displayVal = displayLabel(dim, label);
   const needsQuotes = dimFilter.alwaysQuoteValue || displayVal.includes(" ");
