@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useDql } from "@dynatrace-sdk/react-hooks";
+import { getEnvironmentUrl } from "@dynatrace-sdk/app-environment";
 import { Flex } from "@dynatrace/strato-components/layouts";
 import { Heading, Paragraph } from "@dynatrace/strato-components/typography";
 import { Select, TextInput } from "@dynatrace/strato-components/forms";
@@ -266,10 +267,8 @@ const buildDrilldownUrl = (
   label: string,
   tf: TF,
 ): string => {
-  const envBase = typeof window !== "undefined"
-    ? window.location.href.replace(/\/ui\/apps\/.*$/, "")
-    : "";
-  const base = `${envBase}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
+  const envUrl = getEnvironmentUrl();
+  const base = `${envUrl}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
   const tfParam = encodeURIComponent(tfToUrlParam(tf));
   const filterStr = `Frontends = ${frontend} ${DIM_SESSION_FILTER[dim]} = "${label}" `;
   const hash = `#filtering=${encodeURIComponent(filterStr).replace(/%20/g, "+")}`;
