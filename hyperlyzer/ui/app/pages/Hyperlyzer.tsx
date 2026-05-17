@@ -206,7 +206,7 @@ const DIM_TITLE: Record<DimensionKey, string> = {
 /** DQL expression that yields the dimension's value */
 const DIM_FIELD_EXPR: Record<DimensionKey, string> = {
   os: "os.name",
-  geo: "geo.country.name",
+  geo: "geo.country.iso_code",
   user_action: "coalesce(page.detected_name, page.url.path, page.title)",
   browser: "browser.name",
 };
@@ -266,8 +266,10 @@ const buildDrilldownUrl = (
   label: string,
   tf: TF,
 ): string => {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const base = `${origin}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
+  const envBase = typeof window !== "undefined"
+    ? window.location.href.replace(/\/ui\/apps\/.*$/, "")
+    : "";
+  const base = `${envBase}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
   const tfParam = encodeURIComponent(tfToUrlParam(tf));
   const filterStr = `Frontends = ${frontend} ${DIM_SESSION_FILTER[dim]} = "${label}" `;
   const hash = `#filtering=${encodeURIComponent(filterStr).replace(/%20/g, "+")}`;
@@ -915,14 +917,17 @@ export const Hyperlyzer = () => {
                       }}
                     >
                       <a
-                        href={buildDrilldownUrl(frontend, focusDim, r.label, timeframe)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          window.open(buildDrilldownUrl(frontend, focusDim, r.label, timeframe), "_blank");
+                        }}
                         style={{
                           color: "var(--dt-colors-text-primary-default, #1496ff)",
                           textDecoration: "none",
                           fontWeight: 500,
+                          cursor: "pointer",
                         }}
                       >
                         Sessions ↗
