@@ -265,11 +265,11 @@ const filterClauses = (filters: AppliedFilter[]): string =>
     .join("\n");
 
 /** Filter label used in the Users & Sessions app URL hash */
-const DIM_SESSION_FILTER: Record<DimensionKey, { name: string; quoted: boolean }> = {
-  os: { name: "OS family", quoted: true },
-  geo: { name: "Location", quoted: true },
-  user_action: { name: "Action name", quoted: true },
-  browser: { name: "Browser", quoted: false },
+const DIM_SESSION_FILTER: Record<DimensionKey, { name: string; alwaysQuoteValue: boolean }> = {
+  os: { name: "\"OS Name\"", alwaysQuoteValue: true },
+  geo: { name: "Location", alwaysQuoteValue: true },
+  user_action: { name: "Action name", alwaysQuoteValue: true },
+  browser: { name: "Browser", alwaysQuoteValue: false },
 };
 
 /** Convert the app timeframe to the tf query param format used by DT apps (e.g. "now-2h;now" or ISO;ISO) */
@@ -289,13 +289,22 @@ const buildDrilldownUrl = (
   dim: DimensionKey,
   label: string,
   tf: TF,
+  appEntityId?: string,
 ): string => {
   const envUrl = getEnvironmentUrl();
+
+  // User actions link to the Vitals Experience app
+  if (dim === "user_action" && appEntityId) {
+    const pageEncoded = encodeURIComponent(btoa(label));
+    return `${envUrl}/ui/apps/dynatrace.experience.vitals/performance/web/${appEntityId}/pages/${pageEncoded}`;
+  }
+
   const base = `${envUrl}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
   const tfParam = encodeURIComponent(tfToUrlParam(tf));
   const dimFilter = DIM_SESSION_FILTER[dim];
   const displayVal = displayLabel(dim, label);
-  const valStr = dimFilter.quoted ? `"${displayVal}"` : displayVal;
+  const needsQuotes = dimFilter.alwaysQuoteValue || displayVal.includes(" ");
+  const valStr = needsQuotes ? `"${displayVal}"` : displayVal;
   const filterStr = `Frontends = ${frontend} ${dimFilter.name} = ${valStr} `;
   const hash = `#filtering=${encodeURIComponent(filterStr).replace(/%20/g, "+")}`;
   return `${base}?tf=${tfParam}&df=1&perspective=general&sort=navigationCount%3Adescending${hash}`;
@@ -484,6 +493,12 @@ export const Hyperlyzer = () => {
   );
   const [selectedMetric, setSelectedMetric] = useState<MetricKey>("duration");
   const metric = METRIC_MAP[selectedMetric];
+
+  // Lookup the APPLICATION entity ID for the vitals experience drilldown
+  const appEntity = useDql<{ id: string }>({
+    query: `fetch dt.entity.application | filter entity.name == "${escapeStr(frontend)}" | fields id | limit 1`,
+  });
+  const appEntityId = (appEntity.data?.records?.[0] as { id?: string } | undefined)?.id ?? "";
 
   // Drop filters that no longer match the focused frontend / timeframe? keep them; user can clear.
 
@@ -950,7 +965,7 @@ export const Hyperlyzer = () => {
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          window.open(buildDrilldownUrl(frontend, focusDim, r.label, timeframe), "_blank");
+                          window.open(buildDrilldownUrl(frontend, focusDim, r.label, timeframe, appEntityId), "_blank");
                         }}
                         style={{
                           color: "var(--dt-colors-text-primary-default, #1496ff)",
@@ -959,7 +974,7 @@ export const Hyperlyzer = () => {
                           cursor: "pointer",
                         }}
                       >
-                        Sessions ↗
+                        {focusDim === "user_action" ? "Vitals ↗" : "Sessions ↗"}
                       </a>
                     </td>
                   </tr>
