@@ -1,10 +1,6 @@
-fetch user.events, from: now() - 6h, to: now()
+fetch user.events, from: now() - 2h, to: now()
 | filter characteristics.has_navigation == true
 | filter dt.rum.user_type != "robot"
 | filter frontend.name == "www.angular.easytravel.com"
-| fieldsAdd label = geo.country.iso_code
-| filter isNotNull(label) and label != ""
-| summarize median_dur_ms = median(duration) / 1000000, cnt = count(), by: {label}
-| sort cnt desc
-| limit 500
-| summarize total = count()
+| fieldsKeep web_vitals.*, timing.*
+| limit 1

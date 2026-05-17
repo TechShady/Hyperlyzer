@@ -27,9 +27,7 @@ export type MetricKey =
   | "cls"
   | "ttfb"
   | "load_event_end"
-  | "performance_health"
-  | "fcp"
-  | "speed_index";
+  | "fcp";
 
 interface MetricConfig {
   key: MetricKey;
@@ -42,6 +40,8 @@ interface MetricConfig {
   higherIsBetter: boolean;
   /** Additional fieldsAdd clauses needed before summarize (e.g. for computed scores) */
   preCompute?: string;
+  /** fieldsAdd clause AFTER summarize (e.g. to derive metric_val from intermediate aggregations) */
+  postCompute?: string;
   /** Additional filter to apply (e.g. only rows that have the field) */
   extraFilter?: string;
 }
@@ -59,7 +59,9 @@ const METRICS: MetricConfig[] = [
     key: "apdex",
     label: "Apdex",
     summarize:
-      "metric_val = (toDouble(countIf(duration <= 3000000000)) + 0.5 * toDouble(countIf(duration > 3000000000 AND duration <= 12000000000))) / toDouble(count()), cnt = count()",
+      "satisfied = countIf(duration <= 3000000000), frustrated = countIf(duration > 12000000000), cnt = count()",
+    postCompute:
+      "| fieldsAdd metric_val = (toDouble(satisfied) + 0.5 * toDouble(cnt - satisfied - frustrated)) / toDouble(cnt)",
     unit: "score",
     higherIsBetter: true,
   },
@@ -67,7 +69,7 @@ const METRICS: MetricConfig[] = [
     key: "lcp",
     label: "LCP",
     summarize:
-      "metric_val = median(web_vitals.largest_contentful_paint), cnt = count()",
+      "metric_val = median(web_vitals.largest_contentful_paint) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.largest_contentful_paint)",
@@ -76,7 +78,7 @@ const METRICS: MetricConfig[] = [
     key: "inp",
     label: "INP",
     summarize:
-      "metric_val = median(web_vitals.interaction_to_next_paint), cnt = count()",
+      "metric_val = median(web_vitals.interaction_to_next_paint) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.interaction_to_next_paint)",
@@ -94,7 +96,7 @@ const METRICS: MetricConfig[] = [
     key: "ttfb",
     label: "TTFB",
     summarize:
-      "metric_val = median(web_vitals.time_to_first_byte), cnt = count()",
+      "metric_val = median(web_vitals.time_to_first_byte) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.time_to_first_byte)",
@@ -103,42 +105,19 @@ const METRICS: MetricConfig[] = [
     key: "load_event_end",
     label: "Load Event End",
     summarize:
-      "metric_val = median(timing.load_event_end), cnt = count()",
+      "metric_val = median(timing.load_event_end) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(timing.load_event_end)",
   },
   {
-    key: "performance_health",
-    label: "Performance Health",
-    preCompute: `| fieldsAdd lcp_score = if(web_vitals.largest_contentful_paint <= 2500, 1.0, if(web_vitals.largest_contentful_paint <= 4000, 0.5, 0.0)),
-    inp_score = if(web_vitals.interaction_to_next_paint <= 200, 1.0, if(web_vitals.interaction_to_next_paint <= 500, 0.5, 0.0)),
-    cls_score = if(web_vitals.cumulative_layout_shift <= 0.1, 1.0, if(web_vitals.cumulative_layout_shift <= 0.25, 0.5, 0.0)),
-    ttfb_score = if(web_vitals.time_to_first_byte <= 800, 1.0, if(web_vitals.time_to_first_byte <= 1800, 0.5, 0.0))
-| fieldsAdd perf_health = (lcp_score + inp_score + cls_score + ttfb_score) / 4.0`,
-    summarize: "metric_val = avg(perf_health), cnt = count()",
-    unit: "score",
-    higherIsBetter: true,
-    extraFilter:
-      "| filter isNotNull(web_vitals.largest_contentful_paint) AND isNotNull(web_vitals.interaction_to_next_paint) AND isNotNull(web_vitals.cumulative_layout_shift) AND isNotNull(web_vitals.time_to_first_byte)",
-  },
-  {
     key: "fcp",
     label: "FCP",
     summarize:
-      "metric_val = median(web_vitals.first_contentful_paint), cnt = count()",
+      "metric_val = median(web_vitals.first_contentful_paint) / 1000000, cnt = count()",
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.first_contentful_paint)",
-  },
-  {
-    key: "speed_index",
-    label: "Speed Index",
-    summarize:
-      "metric_val = median(user_action.speed_index), cnt = count()",
-    unit: "ms",
-    higherIsBetter: false,
-    extraFilter: "| filter isNotNull(user_action.speed_index)",
   },
 ];
 
@@ -279,6 +258,7 @@ ${metric.preCompute ?? ""}
 | summarize
     ${metric.summarize},
     by: {label}
+${metric.postCompute ?? ""}
 | sort cnt desc
 | limit ${topN}
 `.trim();
@@ -297,7 +277,8 @@ ${fetchClause(tf)}
 ${filterClauses(filters)}
 ${metric.extraFilter ?? ""}
 ${metric.preCompute ?? ""}
-| summarize ${metric.summarize.replace(", cnt = count()", "")}
+| summarize ${metric.summarize}
+${metric.postCompute ?? ""}
 `.trim();
 
 const toItems = (records: DimRow[] | undefined): DimensionItem[] => {
