@@ -294,7 +294,7 @@ const buildDrilldownUrl = (
   // User actions link to the Vitals Experience app
   if (dim === "user_action" && appEntityId) {
     const pageEncoded = encodeURIComponent(btoa(label));
-    return `${envUrl}/ui/apps/dynatrace.experience.vitals/performance/web/${appEntityId}/pages/${pageEncoded}?tf=${tfParam}`;
+    return `${envUrl}/ui/apps/dynatrace.experience.vitals/performance/web/${appEntityId}/pages/${pageEncoded}?gtf=${tfParam}`;
   }
 
   const base = `${envUrl}/ui/apps/dynatrace.users.sessions/sessions/finished-sessions/finished-sessions`;
