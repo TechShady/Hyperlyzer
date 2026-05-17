@@ -44,6 +44,8 @@ interface MetricConfig {
   postCompute?: string;
   /** Additional filter to apply (e.g. only rows that have the field) */
   extraFilter?: string;
+  /** If true, skip the `characteristics.has_navigation == true` base filter (web vitals live on page_summary events) */
+  skipNavigationFilter?: boolean;
 }
 
 const METRICS: MetricConfig[] = [
@@ -59,7 +61,7 @@ const METRICS: MetricConfig[] = [
     key: "apdex",
     label: "Apdex",
     summarize:
-      "satisfied = countIf(duration <= 3000000000), frustrated = countIf(duration > 12000000000), cnt = count()",
+      "satisfied = countIf(duration <= 3s), frustrated = countIf(duration > 12s), cnt = count()",
     postCompute:
       "| fieldsAdd metric_val = (toDouble(satisfied) + 0.5 * toDouble(cnt - satisfied - frustrated)) / toDouble(cnt)",
     unit: "score",
@@ -73,6 +75,7 @@ const METRICS: MetricConfig[] = [
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.largest_contentful_paint)",
+    skipNavigationFilter: true,
   },
   {
     key: "inp",
@@ -82,6 +85,7 @@ const METRICS: MetricConfig[] = [
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.interaction_to_next_paint)",
+    skipNavigationFilter: true,
   },
   {
     key: "cls",
@@ -91,6 +95,7 @@ const METRICS: MetricConfig[] = [
     unit: "ratio",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.cumulative_layout_shift)",
+    skipNavigationFilter: true,
   },
   {
     key: "ttfb",
@@ -109,6 +114,7 @@ const METRICS: MetricConfig[] = [
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(timing.load_event_end)",
+    skipNavigationFilter: true,
   },
   {
     key: "fcp",
@@ -118,6 +124,7 @@ const METRICS: MetricConfig[] = [
     unit: "ms",
     higherIsBetter: false,
     extraFilter: "| filter isNotNull(web_vitals.first_contentful_paint)",
+    skipNavigationFilter: true,
   },
 ];
 
@@ -137,7 +144,7 @@ const formatMetricValue = (value: number, metric: MetricConfig): string => {
     case "seconds":
       return `${value.toFixed(2)} s`;
     case "score":
-      return value.toFixed(3);
+      return value.toFixed(2);
     case "ratio":
       return value.toFixed(4);
   }
@@ -245,9 +252,12 @@ const buildDimQuery = (
   metric: MetricConfig,
   topN = TOP_N,
 ): string => {
+  const navFilter = metric.skipNavigationFilter
+    ? ""
+    : "| filter characteristics.has_navigation == true";
   return `
 ${fetchClause(tf)}
-| filter characteristics.has_navigation == true
+${navFilter}
 | filter dt.rum.user_type != "robot"
 | filter frontend.name == "${escapeStr(frontend)}"
 ${filterClauses(filters)}
@@ -269,9 +279,13 @@ const medianQuery = (
   tf: TF,
   filters: AppliedFilter[],
   metric: MetricConfig,
-): string => `
+): string => {
+  const navFilter = metric.skipNavigationFilter
+    ? ""
+    : "| filter characteristics.has_navigation == true";
+  return `
 ${fetchClause(tf)}
-| filter characteristics.has_navigation == true
+${navFilter}
 | filter dt.rum.user_type != "robot"
 | filter frontend.name == "${escapeStr(frontend)}"
 ${filterClauses(filters)}
@@ -280,6 +294,7 @@ ${metric.preCompute ?? ""}
 | summarize ${metric.summarize}
 ${metric.postCompute ?? ""}
 `.trim();
+};
 
 const toItems = (records: DimRow[] | undefined): DimensionItem[] => {
   if (!records) return [];
